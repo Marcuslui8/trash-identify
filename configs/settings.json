@@ -1,0 +1,25 @@
+{
+  "classes": ["glass", "metal", "paper", "plastic", "unknown"],
+  "image": {
+    "width": 224,
+    "height": 224,
+    "minimum_quality": 0.6,
+    "blur_laplacian_threshold": 80.0,
+    "minimum_brightness": 35.0,
+    "maximum_brightness": 225.0
+  },
+  "decision": {
+    "acceptance_confidence": 0.8,
+    "review_confidence": 0.6,
+    "minimum_margin": 0.2,
+    "minimum_multi_view_agreement": 0.7
+  },
+  "model": {"path": "models/waste_classifier.pt", "device": "auto"},
+  "detector": {
+    "path": "models/waste_detector.pt",
+    "device": "auto",
+    "confidence": 0.3,
+    "iou": 0.5,
+    "maximum_objects": 20
+  }
+}

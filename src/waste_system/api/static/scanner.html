@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>智慧垃圾掃描</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f2f5f3; color: #183026; }
+    main { width: min(920px, calc(100% - 24px)); margin: 18px auto; }
+    .card { background: white; border-radius: 18px; padding: 18px; box-shadow: 0 8px 30px #173c2714; }
+    h1 { margin: 0 0 8px; font-size: clamp(1.55rem, 6vw, 2.35rem); }
+    .hint { margin: 0 0 16px; color: #52645c; }
+    .controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+    input, button { width: 100%; min-height: 48px; font: inherit; }
+    input { grid-column: 1 / -1; }
+    button { border: 0; border-radius: 12px; padding: 10px; background: #087f5b; color: white; font-weight: 700; cursor: pointer; }
+    button.secondary { background: #e7f2ed; color: #096447; }
+    button.danger { background: #b42318; }
+    button:disabled { cursor: default; opacity: .5; }
+    .stage { position: relative; width: 100%; min-height: 220px; overflow: hidden; border-radius: 14px; background: #17211d; }
+    #camera, #photoPreview { display: block; width: 100%; height: auto; }
+    #camera[hidden], #photoPreview[hidden] { display: none; }
+    #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    #placeholder { display: grid; min-height: 280px; place-items: center; padding: 24px; color: #d6e2dc; text-align: center; }
+    #placeholder[hidden] { display: none; }
+    #captureCanvas { display: none; }
+    #status { min-height: 1.5em; margin: 13px 0; font-weight: 600; }
+    .live-dot { display: inline-block; width: .7em; height: .7em; margin-right: .45em; border-radius: 50%; background: #e5484d; box-shadow: 0 0 0 4px #e5484d2b; }
+    .result { border-left: 4px solid #087f5b; padding: 10px 12px; margin: 9px 0; background: #f3faf7; }
+    .meta { display: block; margin-top: 3px; color: #5c6f66; font-size: .88rem; }
+    @media (max-width: 520px) { .controls { grid-template-columns: 1fr; } input { grid-column: auto; } }
+  </style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <h1>智慧垃圾掃描</h1>
+    <p class="hint">開啟鏡頭可持續辨識；也可以選擇單張照片。請避免拍入人臉或個人資料。</p>
+    <div class="controls">
+      <button id="startCamera">開啟即時鏡頭</button>
+      <button id="stopCamera" class="danger" disabled>停止鏡頭</button>
+      <input id="imageInput" type="file" accept="image/*" capture="environment">
+      <button id="scanButton" class="secondary" disabled>辨識這張照片</button>
+    </div>
+    <div id="stage" class="stage">
+      <div id="placeholder">尚未開啟鏡頭或選擇照片</div>
+      <video id="camera" autoplay muted playsinline hidden></video>
+      <canvas id="photoPreview" hidden></canvas>
+      <canvas id="overlay"></canvas>
+    </div>
+    <canvas id="captureCanvas"></canvas>
+    <p id="status">正在確認模型狀態…</p>
+    <div id="results" aria-live="polite"></div>
+  </section>
+</main>
+<script>
+  const LIVE_INTERVAL_MS = 450;
+  const MAX_FRAME_SIZE = 960;
+  const JPEG_QUALITY = 0.76;
+  const REQUIRED_STABLE_FRAMES = 2;
+  const CLASS_NAMES = {
+    glass: '玻璃', metal: '鐵鋁', paper: '紙類', plastic: '塑膠', unknown: '無法分類'
+  };
+
+  const startButton = document.querySelector('#startCamera');
+  const stopButton = document.querySelector('#stopCamera');
+  const input = document.querySelector('#imageInput');
+  const scanButton = document.querySelector('#scanButton');
+  const placeholder = document.querySelector('#placeholder');
+  const video = document.querySelector('#camera');
+  const photoCanvas = document.querySelector('#photoPreview');
+  const photoContext = photoCanvas.getContext('2d');
+  const overlay = document.querySelector('#overlay');
+  const overlayContext = overlay.getContext('2d');
+  const captureCanvas = document.querySelector('#captureCanvas');
+  const captureContext = captureCanvas.getContext('2d');
+  const status = document.querySelector('#status');
+  const results = document.querySelector('#results');
+
+  let selectedFile = null;
+  let cameraStream = null;
+  let liveActive = false;
+  let requestInFlight = false;
+  let requestController = null;
+  let liveTimer = null;
+  let previousTracks = [];
+
+  function setMode(mode) {
+    placeholder.hidden = mode !== 'empty';
+    video.hidden = mode !== 'camera';
+    photoCanvas.hidden = mode !== 'photo';
+    if (mode === 'empty') clearOverlay();
+  }
+
+  function clearOverlay() {
+    overlayContext.clearRect(0, 0, overlay.width, overlay.height);
+  }
+
+  function configureCanvas(canvas, width, height) {
+    canvas.width = Math.max(1, Math.round(width));
+    canvas.height = Math.max(1, Math.round(height));
+  }
+
+  function frameDimensions(width, height) {
+    const scale = Math.min(1, MAX_FRAME_SIZE / Math.max(width, height));
+    return { width: Math.round(width * scale), height: Math.round(height * scale) };
+  }
+
+  function canvasBlob(canvas) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('無法擷取鏡頭畫面')), 'image/jpeg', JPEG_QUALITY);
+    });
+  }
+
+  function intersectionOverUnion(first, second) {
+    const x1 = Math.max(first.x1, second.x1);
+    const y1 = Math.max(first.y1, second.y1);
+    const x2 = Math.min(first.x2, second.x2);
+    const y2 = Math.min(first.y2, second.y2);
+    const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+    const firstArea = (first.x2 - first.x1) * (first.y2 - first.y1);
+    const secondArea = (second.x2 - second.x1) * (second.y2 - second.y1);
+    return intersection / Math.max(1, firstArea + secondArea - intersection);
+  }
+
+  function stableObjects(objects) {
+    const nextTracks = objects.map(item => {
+      const className = item.classification.final_class;
+      const candidates = previousTracks.filter(track =>
+        track.className === className && intersectionOverUnion(track.box, item.box) >= 0.3
+      );
+      const previous = candidates.sort((a, b) =>
+        intersectionOverUnion(b.box, item.box) - intersectionOverUnion(a.box, item.box)
+      )[0];
+      return { item, box: item.box, className, hits: previous ? previous.hits + 1 : 1 };
+    });
+    previousTracks = nextTracks;
+    return nextTracks.filter(track => track.hits >= REQUIRED_STABLE_FRAMES).map(track => track.item);
+  }
+
+  function drawObjects(payload, objects) {
+    configureCanvas(overlay, payload.image_width, payload.image_height);
+    clearOverlay();
+    overlayContext.lineWidth = Math.max(3, overlay.width / 260);
+    overlayContext.font = `700 ${Math.max(18, overlay.width / 34)}px system-ui`;
+    overlayContext.textBaseline = 'bottom';
+
+    for (const item of objects) {
+      const box = item.box;
+      const className = CLASS_NAMES[item.classification.final_class] ?? item.classification.final_class;
+      const confidence = Math.round(item.classification.confidence * 100);
+      const label = `${item.object_id}. ${className} ${confidence}%`;
+      overlayContext.strokeStyle = '#00e08f';
+      overlayContext.fillStyle = '#052e22cc';
+      overlayContext.strokeRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
+      const metrics = overlayContext.measureText(label);
+      const labelHeight = Math.max(30, overlay.width / 25);
+      const labelY = Math.max(labelHeight, box.y1);
+      overlayContext.fillRect(box.x1, labelY - labelHeight, metrics.width + 12, labelHeight);
+      overlayContext.fillStyle = '#ffffff';
+      overlayContext.fillText(label, box.x1 + 6, labelY - 4);
+    }
+  }
+
+  function renderResults(objects) {
+    results.replaceChildren();
+    for (const item of objects) {
+      const className = CLASS_NAMES[item.classification.final_class] ?? item.classification.final_class;
+      const block = document.createElement('div');
+      block.className = 'result';
+      const title = document.createElement('strong');
+      title.textContent = `${item.object_id}. ${className} ${Math.round(item.classification.confidence * 100)}%`;
+      const advice = document.createElement('div');
+      advice.textContent = item.advice;
+      const meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.textContent = `偵測信心 ${Math.round(item.detection_confidence * 100)}%`;
+      block.append(title, advice, meta);
+      results.appendChild(block);
+    }
+  }
+
+  async function predict(blob, live = false) {
+    const form = new FormData();
+    form.append('file', blob, live ? 'live-frame.jpg' : (selectedFile?.name ?? 'photo.jpg'));
+    form.append('region', 'Taiwan');
+    const startedAt = performance.now();
+    const controller = new AbortController();
+    requestController = controller;
+    let response;
+    let payload;
+    try {
+      response = await fetch('/v1/predict-multiple', {
+        method: 'POST', body: form, signal: controller.signal
+      });
+      payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail ?? '辨識失敗');
+    } finally {
+      if (requestController === controller) requestController = null;
+    }
+    const latency = Math.round(performance.now() - startedAt);
+    const objects = live ? stableObjects(payload.objects) : payload.objects;
+    drawObjects(payload, objects);
+    renderResults(objects);
+
+    if (payload.image_quality < 0.6) {
+      status.textContent = '影像品質不足，請改善光線、保持鏡頭穩定。';
+    } else if (live && payload.objects.length > 0 && objects.length === 0) {
+      status.innerHTML = '<span class="live-dot"></span>正在確認偵測結果…';
+    } else if (objects.length === 0) {
+      status.textContent = live ? `即時辨識中｜未偵測到垃圾｜${latency} ms` : '沒有偵測到垃圾。';
+    } else {
+      status.textContent = `${live ? '即時辨識中｜' : ''}找到 ${objects.length} 件垃圾｜${latency} ms`;
+    }
+  }
+
+  async function liveLoop() {
+    if (!liveActive) return;
+    if (requestInFlight || document.hidden || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      liveTimer = window.setTimeout(liveLoop, LIVE_INTERVAL_MS);
+      return;
+    }
+    requestInFlight = true;
+    try {
+      const dimensions = frameDimensions(video.videoWidth, video.videoHeight);
+      configureCanvas(captureCanvas, dimensions.width, dimensions.height);
+      captureContext.drawImage(video, 0, 0, dimensions.width, dimensions.height);
+      await predict(await canvasBlob(captureCanvas), true);
+    } catch (error) {
+      if (error.name !== 'AbortError') status.textContent = `即時辨識失敗：${error.message}`;
+    } finally {
+      requestInFlight = false;
+      if (liveActive) liveTimer = window.setTimeout(liveLoop, LIVE_INTERVAL_MS);
+    }
+  }
+
+  async function startCamera() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      status.textContent = '瀏覽器無法開啟鏡頭。手機請使用 HTTPS 網址，或改用上傳照片。';
+      return;
+    }
+    stopCamera();
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+      video.srcObject = cameraStream;
+      await video.play();
+      const dimensions = frameDimensions(video.videoWidth, video.videoHeight);
+      configureCanvas(overlay, dimensions.width, dimensions.height);
+      setMode('camera');
+      liveActive = true;
+      previousTracks = [];
+      startButton.disabled = true;
+      stopButton.disabled = false;
+      input.disabled = true;
+      scanButton.disabled = true;
+      status.innerHTML = '<span class="live-dot"></span>即時鏡頭已開啟，正在辨識…';
+      liveLoop();
+    } catch (error) {
+      status.textContent = `無法開啟鏡頭：${error.message}`;
+      setMode(selectedFile ? 'photo' : 'empty');
+    }
+  }
+
+  function stopCamera() {
+    liveActive = false;
+    window.clearTimeout(liveTimer);
+    requestController?.abort();
+    requestController = null;
+    cameraStream?.getTracks().forEach(track => track.stop());
+    cameraStream = null;
+    video.srcObject = null;
+    previousTracks = [];
+    requestInFlight = false;
+    startButton.disabled = false;
+    stopButton.disabled = true;
+    input.disabled = false;
+    scanButton.disabled = !selectedFile;
+    setMode(selectedFile ? 'photo' : 'empty');
+    if (!selectedFile) status.textContent = '鏡頭已停止。';
+  }
+
+  input.addEventListener('change', () => {
+    selectedFile = input.files[0] ?? null;
+    scanButton.disabled = !selectedFile;
+    results.replaceChildren();
+    previousTracks = [];
+    if (!selectedFile) {
+      setMode('empty');
+      return;
+    }
+    const image = new Image();
+    image.onload = () => {
+      configureCanvas(photoCanvas, image.naturalWidth, image.naturalHeight);
+      configureCanvas(overlay, image.naturalWidth, image.naturalHeight);
+      photoContext.drawImage(image, 0, 0);
+      URL.revokeObjectURL(image.src);
+      clearOverlay();
+      setMode('photo');
+      status.textContent = '照片已載入，按「辨識這張照片」。';
+    };
+    image.src = URL.createObjectURL(selectedFile);
+  });
+
+  scanButton.addEventListener('click', async () => {
+    if (!selectedFile || requestInFlight) return;
+    requestInFlight = true;
+    scanButton.disabled = true;
+    status.textContent = '辨識中…';
+    results.replaceChildren();
+    try {
+      await predict(selectedFile, false);
+    } catch (error) {
+      status.textContent = `無法辨識：${error.message}`;
+    } finally {
+      requestInFlight = false;
+      scanButton.disabled = false;
+    }
+  });
+
+  startButton.addEventListener('click', startCamera);
+  stopButton.addEventListener('click', stopCamera);
+  window.addEventListener('beforeunload', stopCamera);
+
+  fetch('/health')
+    .then(response => response.json())
+    .then(health => {
+      status.textContent = health.multi_object_ready
+        ? '模型已就緒，可開啟即時鏡頭或選擇照片。'
+        : '模型尚未就緒，請確認 YOLO 與 CNN 權重。';
+    })
+    .catch(() => { status.textContent = '無法取得模型狀態。'; });
+</script>
+</body>
+</html>
