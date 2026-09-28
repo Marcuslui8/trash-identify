@@ -30,6 +30,7 @@
     .live-dot { display: inline-block; width: .7em; height: .7em; margin-right: .45em; border-radius: 50%; background: #e5484d; box-shadow: 0 0 0 4px #e5484d2b; }
     .result { border-left: 4px solid #087f5b; padding: 10px 12px; margin: 9px 0; background: #f3faf7; }
     .meta { display: block; margin-top: 3px; color: #5c6f66; font-size: .88rem; }
+    .collector-link { display:inline-block; margin-bottom:14px; color:#087f5b; font-weight:700; }
     @media (max-width: 520px) { .controls { grid-template-columns: 1fr; } input { grid-column: auto; } }
   </style>
 </head>
@@ -38,6 +39,7 @@
   <section class="card">
     <h1>智慧垃圾掃描</h1>
     <p class="hint">開啟鏡頭可持續辨識；也可以選擇單張照片。請避免拍入人臉或個人資料。</p>
+    <a class="collector-link" href="/collector">前往手機訓練照片蒐集 →</a>
     <div class="controls">
       <button id="startCamera">開啟即時鏡頭</button>
       <button id="stopCamera" class="danger" disabled>停止鏡頭</button>

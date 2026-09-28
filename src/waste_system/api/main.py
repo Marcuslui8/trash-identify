@@ -8,6 +8,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from waste_system import __version__
+from waste_system.collection import CollectionError, collection_status, save_capture
 from waste_system.config import get_settings, project_path
 from waste_system.inference.classifier import ModelUnavailableError, TorchscriptClassifier
 from waste_system.inference.decision_engine import DecisionEngine
@@ -67,6 +68,40 @@ def health() -> dict[str, object]:
 @app.get("/scanner", include_in_schema=False)
 def scanner() -> FileResponse:
     return FileResponse(Path(__file__).parent / "static" / "scanner.html")
+
+
+@app.get("/collector", include_in_schema=False)
+def collector() -> FileResponse:
+    return FileResponse(Path(__file__).parent / "static" / "collector.html")
+
+
+@app.get("/v1/collection/status")
+def capture_status() -> dict[str, object]:
+    return collection_status(project_path("data/local_capture"))
+
+
+@app.post("/v1/collection/images", status_code=201)
+async def collect_image(
+    file: UploadFile = File(...),
+    category: str = Form(...),
+    session: str = Form(...),
+    notes: str = Form(""),
+    captured_at: str = Form(""),
+) -> dict[str, object]:
+    if file.content_type is not None and not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="Only image uploads are supported")
+    try:
+        record = save_capture(
+            await file.read(),
+            category=category,
+            session=session,
+            notes=notes,
+            captured_at=captured_at,
+            collection_root=project_path("data/local_capture"),
+        )
+    except CollectionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"accepted": True, "record": record, "status": capture_status()}
 
 
 @app.get("/local-ca.crt", include_in_schema=False)

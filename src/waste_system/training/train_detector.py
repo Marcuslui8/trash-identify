@@ -12,8 +12,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-size", type=int, default=640)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--device", default="0")
-    parser.add_argument("--project", default="runs/detection")
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=None,
+        help="Optional initial learning rate (lr0), useful for checkpoint fine-tuning",
+    )
+    parser.add_argument(
+        "--optimizer",
+        default="auto",
+        help="Ultralytics optimizer name; use AdamW for controlled fine-tuning",
+    )
+    parser.add_argument("--patience", type=int, default=15)
+    parser.add_argument("--warmup-epochs", type=float, default=3.0)
+    parser.add_argument("--warmup-bias-learning-rate", type=float, default=0.1)
+    parser.add_argument("--project", type=Path, default=Path("runs/detection"))
     parser.add_argument("--name", default="waste_detector")
+    parser.add_argument(
+        "--resume-from",
+        type=Path,
+        help="Resume an interrupted Ultralytics run from its last.pt checkpoint",
+    )
     return parser.parse_args()
 
 
@@ -25,10 +44,17 @@ def main() -> None:
         raise RuntimeError(
             "Ultralytics is not installed. Run: python -m pip install -e '.[detection]'"
         ) from exc
+    if args.resume_from is not None:
+        checkpoint = args.resume_from.resolve()
+        if not checkpoint.is_file():
+            raise FileNotFoundError(checkpoint)
+        result = YOLO(str(checkpoint)).train(resume=True)
+        print(result)
+        return
     if not args.data.is_file():
         raise FileNotFoundError(args.data)
     model = YOLO(args.base_model)
-    result = model.train(
+    train_options = dict(
         data=str(args.data),
         epochs=args.epochs,
         imgsz=args.image_size,
@@ -36,9 +62,15 @@ def main() -> None:
         device=args.device,
         project=str(args.project.resolve()),
         name=args.name,
-        patience=15,
+        patience=args.patience,
+        optimizer=args.optimizer,
+        warmup_epochs=args.warmup_epochs,
+        warmup_bias_lr=args.warmup_bias_learning_rate,
         seed=42,
     )
+    if args.learning_rate is not None:
+        train_options["lr0"] = args.learning_rate
+    result = model.train(**train_options)
     print(result)
     print(
         "After validation, copy runs/detection/waste_detector/weights/best.pt "

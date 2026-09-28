@@ -2,6 +2,99 @@
 
 本檔案記錄專案每次更新。新紀錄請加在最上方，日期使用 `YYYY-MM-DD`。
 
+## 2026-09-28 — v0.8.0 系統與文件整理
+
+### 更新
+
+- README 改為目前可直接使用的系統說明，整合架構、安裝、手機 HTTPS、API、資料集、模型指標、訓練、測試與限制。
+- README 移除未完成事項、未來規劃、已失效操作與重複內容，不再作為待辦清單。
+- 專案版本更新為 `0.8.0`。
+- 清除 `.tmp`、`.pytest_cache`、圖表輸出與 Codex 建置暫存目錄；這些內容皆可由系統重新產生。
+
+### 保留
+
+- 正式部署的 `models/waste_detector.pt`、`models/waste_classifier.pt`、YOLO26s 基礎權重及正式 `phone_s640` 訓練紀錄均保留。
+- 資料集、授權文件、匯入清單、測試、報告及手機蒐集功能均保留。
+
+## 2026-09-28 — v0.7.1 公開乾淨街景負樣本
+
+### 新增
+
+- 核對 Bangladesh Illegal Dumping Dataset，確認授權為 CC BY-NC 4.0，符合目前學校研究的非商業用途。
+- 新增 `scripts/import_mendeley_negatives.py`，只匯入 `Real/Negative` 與 `Real/Critical_negative`，不使用資料增強副本或沒有 bounding box 的正樣本。
+- 匯入器支援官方 SHA-256 驗證、完全重複檔去除、失敗重試、EXIF 移除、長邊 1600 px 縮圖、空 YOLO label 與來源 manifest。
+- 新增 `data/MENDELEY_ILLEGAL_DUMPING_LICENSE.md`，記錄作者、DOI、非商業限制、實際檔案數與專案處理方式。
+
+### 結果與決策
+
+- 公開 API 實際列出 478 個負樣本檔；去除 50 個完全重複檔後，成功匯入 428 張唯一圖片，其中一般乾淨街景 230 張、困難負樣本 198 張，保存後約 192.5 MB。
+- 所有新圖片只加入 train；validation 與 test 保持不變，避免相同來源影響獨立評估。
+- 合併偵測資料更新為 7,830 張圖片、14,201 個框；train / validation / test 為 6,088 / 864 / 878 張。
+- 完整資料驗證通過。網路街景可補強誤報，但不能冒充本地手機資料，也不能取代實際部署場景驗收。
+- 抽查並拒絕 `keremberke/garbage-object-detection`：其大量框覆蓋全圖或過小，且多為白底／圖庫素材，不加入正式資料。
+- 訓練入口新增可重現的 optimizer、初始學習率、warm-up epochs 與 warm-up bias learning rate 參數。
+- 以舊 `phone_s640/best.pt` 嘗試保守微調；第 1 epoch 為 P 0.795、R 0.640、mAP50 0.725，第 2 epoch 為 P 0.826、R 0.617、mAP50 0.714，低於原驗證 mAP50 約 0.749。候選模型因此拒絕，未覆蓋正式權重；後續應從 YOLO26s 基礎權重完整重訓並做來源平衡。
+- 發現 `models/waste_detector.pt` 仍是 9/19 的舊 YOLO26n。先備份為 `models/waste_detector_yolo26n_legacy.pt`，再部署已通過獨立 test 的 `phone_s640/best.pt`。YOLO26s test 為 P 0.781、R 0.586、mAP50 0.662、mAP50-95 0.445，平均推論約 9.48 ms／張；網站服務需重啟才會載入新權重。
+- `start_local_https.ps1` 現在會先檢查 8443；若健康的本專案服務已在背景執行，會顯示網址與健康狀態後正常結束，不再讓 Uvicorn 拋出 WinError 10048。若連接埠由其他程式佔用，則提供明確的 `netstat` 診斷指令。
+
+## 2026-09-28 — v0.7.0 手機本地資料蒐集器
+
+### 新增
+
+- 新增 `/collector` 手機蒐集頁，支援後鏡頭、單張拍攝與每 3 秒自動連拍。
+- 設定 500 張引導配額：有垃圾 350、無垃圾 100、困難案例 50，並即時顯示進度。
+- 新增 `/v1/collection/images` 與 `/v1/collection/status`，照片與逐張 JSON metadata 只保存在本機 `data/local_capture/`。
+- 每張照片記錄 session、類型、品質分數、亮度、模糊度、雜湊、備註及 bounding-box 標註狀態。
+
+### 安全與品質
+
+- 圖片重新編碼以移除 EXIF，長邊限制 1600 px，單檔限制 12 MB。
+- Session 名稱嚴格限制安全字元，避免路徑越界。
+- 拒絕完全相同與同 session 中視覺過度相似的照片；一般樣本若嚴重模糊／曝光則要求重拍，困難案例可保留。
+- 本地蒐集照片加入 `.gitignore`，避免私人影像誤傳 GitHub。
+- 新增 4 項蒐集器測試；全專案 24 項測試通過。
+
+### 限制
+
+- 程式可處理拍攝、品質、去重、配額與保存，但實際本地場景仍必須由使用者拿手機拍攝。
+- 有垃圾與困難案例必須完成人工 bounding box 確認後才能加入 YOLO，避免把模型漏檢錯誤當成背景。
+
+## 2026-09-27 — 手機資料擴充與 YOLO26s 重訓
+
+### 新增
+
+- 整合 Bower 公開手機垃圾資料：1,578 張唯一手機照片、2,546 個人工複核框／材質裁切。
+- 從不與任何垃圾框重疊且保留安全邊距的區域產生 129 張背景負樣本，補強空桌面、地面等無垃圾畫面。
+- 新增 `scripts/import_bower.py`、來源與 MIT 授權說明、五分類合併索引及匯入單元測試。
+- 新增 `scripts/evaluate_detector.py`，固定以獨立 test split 輸出 Precision、Recall、mAP 與每張推論時間。
+
+### 清理與修正
+
+- 偵測訓練資料移除 Bower 物件內部零件的巢狀重複框；CNN 仍保留各材質裁切。
+- 修正 YOLO 訓練入口的 `--project` 預設型別，避免相對輸出目錄錯誤。
+- 移除 CoxPWD 一筆完全重複的 YOLO 標籤。
+- YOLO 訓練入口新增 `--resume-from`，額度、關機或終端中斷後可從 `last.pt` 接續。
+- 合併後偵測資料為 7,402 張圖片、14,201 個框；train / validation / test 為 5,660 / 864 / 878 張。
+
+### 模型選擇
+
+- 手機目前只負責拍攝與傳送，RTX 3050 電腦負責推論，因此選用 YOLO26s 而非 nano；1 epoch 壓力測試顯示約使用 1.4 GB VRAM，驗證推論約 5.9 ms／張。
+- 正式訓練採 640 px、batch 8、最多 60 epochs 與 early stopping；最佳權重須通過獨立 test 評估後才替換正式模型。
+
+## 2026-09-27 — 偵測能力改善規劃
+
+### 分析
+
+- 現有 YOLO 結果為 Precision 0.6584、Recall 0.4637、mAP50 0.5124、mAP50-95 0.3713；漏檢是目前主要瓶頸。
+- CNN 公開測試 Accuracy 0.9054、Macro F1 0.8974，優於偵測器，但仍需以手機實拍裁切圖驗證 domain shift。
+- 現有正式 YOLO 權重早於 CoxPWD 匯入，尚未使用目前共 5,695 張圖片及 12,087 個框重新訓練。
+- CoxPWD 占訓練圖片約 75.5% 且全為戶外塑膠，必須補充本地室內、多材質與負樣本，並按資料來源分開評估。
+
+### 新增
+
+- 新增 `DETECTION_IMPROVEMENT_PLAN.md`，記錄本地測試集、重新訓練、手機資料蒐集、模型／解析度實驗、門檻校準、手機增強、追蹤穩定化及 CNN 微調方案。
+- 設定第一階段量化驗收目標，避免只用主觀畫面或單一混合 mAP 判斷改善。
+
 ## 2026-09-26 — GitHub 提交整理
 
 ### 修改

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>手機垃圾資料蒐集</title>
+  <style>
+    :root { color-scheme: light; --green:#087f5b; --ink:#17322b; --muted:#60736d; --panel:#fff; --bg:#edf4f1; --warn:#a45700; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,"Noto Sans TC",sans-serif; }
+    main { width:min(760px,100%); margin:auto; padding:16px 14px 40px; }
+    h1 { font-size:1.45rem; margin:4px 0 6px; }
+    p { line-height:1.55; }
+    .muted { color:var(--muted); font-size:.9rem; }
+    .card { background:var(--panel); border-radius:16px; padding:14px; margin:12px 0; box-shadow:0 5px 22px #17322b12; }
+    label { display:block; font-weight:700; margin:8px 0 5px; }
+    input, textarea, button { width:100%; font:inherit; }
+    input, textarea { border:1px solid #b9c9c3; border-radius:10px; padding:10px; }
+    textarea { min-height:64px; resize:vertical; }
+    .categories { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+    .category { border:2px solid #c8d7d1; border-radius:12px; padding:10px 5px; text-align:center; cursor:pointer; font-weight:750; }
+    .category input { display:none; }
+    .category:has(input:checked) { border-color:var(--green); color:var(--green); background:#e4f6ef; }
+    video { width:100%; max-height:62vh; background:#0d1714; border-radius:14px; object-fit:cover; }
+    canvas { display:none; }
+    button { border:0; border-radius:11px; padding:12px; background:var(--green); color:#fff; font-weight:750; cursor:pointer; }
+    button.secondary { background:#49645b; }
+    button.stop { background:#9a3412; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .buttons { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:9px; }
+    .progress-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+    .metric { padding:9px; border-radius:11px; background:#f2f7f5; text-align:center; }
+    .metric strong { display:block; font-size:1.25rem; }
+    progress { width:100%; height:12px; accent-color:var(--green); }
+    #message { min-height:1.5em; font-weight:700; }
+    #message.error { color:#b42318; }
+    #message.ok { color:var(--green); }
+    ul { padding-left:20px; line-height:1.55; }
+    @media (max-width:520px) { .categories,.progress-grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>手機垃圾資料蒐集</h1>
+  <p class="muted">照片只存到這台電腦，不會傳送至第三方。請勿拍到人臉、文件、門牌或個人資料。</p>
+
+  <section class="card">
+    <div class="progress-grid">
+      <div class="metric">有垃圾<strong id="positiveCount">0 / 350</strong><progress id="positiveProgress" max="350" value="0"></progress></div>
+      <div class="metric">無垃圾<strong id="negativeCount">0 / 100</strong><progress id="negativeProgress" max="100" value="0"></progress></div>
+      <div class="metric">困難案例<strong id="hardCount">0 / 50</strong><progress id="hardProgress" max="50" value="0"></progress></div>
+    </div>
+    <p id="total" class="muted">總計 0 / 500</p>
+  </section>
+
+  <section class="card">
+    <label for="session">場景 Session</label>
+    <input id="session" maxlength="48" placeholder="例如 desk_day_01" autocomplete="off">
+    <p class="muted">同一桌面或同一次連拍使用相同名稱；換房間、背景或時段就換一個名稱。</p>
+
+    <label>照片類型</label>
+    <div class="categories">
+      <label class="category"><input type="radio" name="category" value="positive" checked>♻️ 有垃圾</label>
+      <label class="category"><input type="radio" name="category" value="negative">✅ 無垃圾</label>
+      <label class="category"><input type="radio" name="category" value="hard">🌙 困難案例</label>
+    </div>
+
+    <label for="notes">備註（選填）</label>
+    <textarea id="notes" maxlength="200" placeholder="例如：逆光、透明玻璃、三件重疊"></textarea>
+  </section>
+
+  <section class="card">
+    <video id="video" playsinline muted></video>
+    <canvas id="canvas"></canvas>
+    <div class="buttons">
+      <button id="cameraButton">開啟後鏡頭</button>
+      <button id="captureButton" disabled>拍攝一張</button>
+    </div>
+    <div class="buttons">
+      <button id="autoButton" class="secondary" disabled>開始自動連拍（每 3 秒）</button>
+      <button id="stopButton" class="stop" disabled>停止鏡頭</button>
+    </div>
+    <p id="message" aria-live="polite"></p>
+  </section>
+
+  <section class="card">
+    <strong>每個場景怎麼拍</strong>
+    <ul>
+      <li>每個 session 建議 10～25 張，接著更換背景或物品配置。</li>
+      <li>有垃圾：改變距離、角度、數量、遮擋與畫面位置。</li>
+      <li>無垃圾：拍桌面、地板、垃圾桶附近、電線、餐具、手與鞋。</li>
+      <li>困難案例：刻意加入暗光、反光、透明、模糊與遠距小物件。</li>
+      <li>系統會拒絕完全相同或視覺上太接近的連拍畫面。</li>
+    </ul>
+  </section>
+</main>
+<script>
+  const video = document.querySelector('#video');
+  const canvas = document.querySelector('#canvas');
+  const cameraButton = document.querySelector('#cameraButton');
+  const captureButton = document.querySelector('#captureButton');
+  const autoButton = document.querySelector('#autoButton');
+  const stopButton = document.querySelector('#stopButton');
+  const message = document.querySelector('#message');
+  const sessionInput = document.querySelector('#session');
+  let stream = null;
+  let autoTimer = null;
+  let uploading = false;
+
+  const date = new Date();
+  sessionInput.value = `scene_${date.getFullYear()}${String(date.getMonth()+1).padStart(2,'0')}${String(date.getDate()).padStart(2,'0')}_01`;
+
+  function show(text, kind='') {
+    message.textContent = text;
+    message.className = kind;
+  }
+
+  async function refreshStatus() {
+    const response = await fetch('/v1/collection/status');
+    const data = await response.json();
+    for (const category of ['positive','negative','hard']) {
+      document.querySelector(`#${category}Count`).textContent = `${data.counts[category]} / ${data.targets[category]}`;
+      document.querySelector(`#${category}Progress`).value = data.counts[category];
+    }
+    document.querySelector('#total').textContent = `總計 ${data.total} / ${data.target_total}，尚需 ${Math.max(0, data.target_total-data.total)} 張`;
+  }
+
+  async function startCamera() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      captureButton.disabled = false;
+      autoButton.disabled = false;
+      stopButton.disabled = false;
+      cameraButton.disabled = true;
+      show('鏡頭已開啟。拍攝前請確認類型與 session。', 'ok');
+    } catch (error) {
+      show(`無法開啟鏡頭：${error.message}`, 'error');
+    }
+  }
+
+  function stopAuto() {
+    if (autoTimer) clearInterval(autoTimer);
+    autoTimer = null;
+    autoButton.textContent = '開始自動連拍（每 3 秒）';
+    autoButton.classList.remove('stop');
+  }
+
+  function stopCamera() {
+    stopAuto();
+    if (stream) stream.getTracks().forEach(track => track.stop());
+    stream = null;
+    video.srcObject = null;
+    captureButton.disabled = true;
+    autoButton.disabled = true;
+    stopButton.disabled = true;
+    cameraButton.disabled = false;
+    show('鏡頭已停止。');
+  }
+
+  async function capture() {
+    if (!stream || uploading) return;
+    const session = sessionInput.value.trim();
+    if (!/^[a-zA-Z0-9_-]{1,48}$/.test(session)) {
+      show('Session 只能使用英文字母、數字、底線或連字號。', 'error');
+      return;
+    }
+    uploading = true;
+    const maxSide = 1600;
+    const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    const category = document.querySelector('input[name="category"]:checked').value;
+    const form = new FormData();
+    form.append('file', blob, 'capture.jpg');
+    form.append('category', category);
+    form.append('session', session);
+    form.append('notes', document.querySelector('#notes').value);
+    form.append('captured_at', new Date().toISOString());
+    try {
+      const response = await fetch('/v1/collection/images', { method:'POST', body:form });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || '儲存失敗');
+      show(`已保存：${category}；品質 ${data.record.quality_score}`, 'ok');
+      await refreshStatus();
+    } catch (error) {
+      show(error.message, 'error');
+    } finally {
+      uploading = false;
+    }
+  }
+
+  function toggleAuto() {
+    if (autoTimer) { stopAuto(); show('自動連拍已停止。'); return; }
+    autoTimer = setInterval(capture, 3000);
+    autoButton.textContent = '停止自動連拍';
+    autoButton.classList.add('stop');
+    capture();
+  }
+
+  cameraButton.addEventListener('click', startCamera);
+  captureButton.addEventListener('click', capture);
+  autoButton.addEventListener('click', toggleAuto);
+  stopButton.addEventListener('click', stopCamera);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopAuto(); });
+  window.addEventListener('beforeunload', stopCamera);
+  refreshStatus().catch(error => show(error.message, 'error'));
+</script>
+</body>
+</html>

@@ -16,6 +16,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", choices=["train", "validation", "test"], default="train")
     parser.add_argument("--count", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--prefix", default=None, help="Only preview label stems starting with this prefix"
+    )
     parser.add_argument("--output", type=Path, default=Path("reports/detection_preview"))
     parser.add_argument(
         "--max-size", type=int, default=1600, help="Maximum preview width or height"
@@ -36,6 +39,8 @@ def main() -> None:
     label_directory = args.root / "labels" / args.split
     image_directory = args.root / "images" / args.split
     labels = sorted(label_directory.glob("*.txt"))
+    if args.prefix:
+        labels = [path for path in labels if path.stem.startswith(args.prefix)]
     if not labels:
         raise RuntimeError(f"No labels found in {label_directory}")
     selected = random.Random(args.seed).sample(labels, min(args.count, len(labels)))

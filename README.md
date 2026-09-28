@@ -1,11 +1,13 @@
 # 智慧垃圾辨識系統
 
-這是一套可由電腦或手機瀏覽器使用的多物件垃圾辨識系統。目前流程為：
+版本：`0.8.0`
+
+本系統可由電腦或同一區域網路內的手機瀏覽器使用，支援單張照片及即時鏡頭的多物件垃圾辨識。
 
 ```text
 手機鏡頭／上傳照片
         ↓
-YOLO 偵測每件垃圾的位置
+YOLO26s 偵測垃圾位置
         ↓
 OpenCV 逐框裁切與影像品質檢查
         ↓
@@ -16,7 +18,7 @@ EfficientNet-B0 CNN 判斷材質
 中文分類結果與回收建議
 ```
 
-支援五種輸出：
+輸出類別：
 
 - `glass`：玻璃
 - `metal`：鐵鋁
@@ -24,31 +26,31 @@ EfficientNet-B0 CNN 判斷材質
 - `plastic`：塑膠
 - `unknown`：無法分類
 
-YOLO 只負責找出垃圾；CNN 負責材質分類。回收建議目前由安全文字模板產生，尚未連接外部 LLM，因此不需要 API Key，也不會把手機照片傳到第三方服務。
+YOLO 負責找出每件垃圾的位置，CNN 再判斷材質。回收說明由本機安全文字模板產生，不需要 API Key，照片也不會傳送給外部 LLM 服務。
 
-## 目前完成狀態
+## 系統現況
 
-- YOLO 多物件偵測模型：`models/waste_detector.pt`
-- EfficientNet-B0 五分類模型：`models/waste_classifier.pt`
-- 單張照片與即時手機鏡頭辨識
-- 圖片上的 bounding box、中文類別及信心值
-- FastAPI 健康檢查、單物件與多物件 API
-- 區域網路 HTTPS，讓手機瀏覽器取得相機權限
-- RealWaste、TACO 與 CoxPWD 資料匯入工具
-- 低信心、模糊、過暗與無法分類保護
+- 正式偵測模型：`models/waste_detector.pt`（YOLO26s，640 px）
+- 正式分類模型：`models/waste_classifier.pt`（EfficientNet-B0）
+- 支援照片上傳、手機即時後鏡頭、多個 bounding box 與中文結果
+- 提供 `/health`、單物件及多物件辨識 API
+- 提供區域網路 HTTPS 與本機手機資料蒐集頁
+- 已整合 RealWaste、TACO、CoxPWD、Bower 與 Mendeley 資料
+- 具備模糊、過暗、低信心、重複照片及無法分類保護
 
-尚未完成的部分：
+正式 YOLO26s 在獨立 test split 的結果：
 
-- 真正的外部 LLM／RAG 回收規則查詢
-- 金屬、磁性與重量感測器硬體
-- 使用者帳號、雲端部署與辨識紀錄資料庫
-- CoxPWD 完整下載及重新訓練後的模型比較
+| 指標 | 結果 |
+|---|---:|
+| Precision | 0.781 |
+| Recall | 0.586 |
+| mAP50 | 0.662 |
+| mAP50-95 | 0.445 |
+| RTX 3050 平均推論 | 約 9.48 ms／張 |
 
-## 快速開始：電腦使用
+## 安裝
 
 需求：Windows、Python 3.11 以上。
-
-第一次安裝：
 
 ```powershell
 cd "D:\master proj\trash-identify"
@@ -58,7 +60,7 @@ python -m pip install -e ".[dev,training,detection]"
 Copy-Item .env.example .env
 ```
 
-一般啟動：
+## 電腦啟動
 
 ```powershell
 cd "D:\master proj\trash-identify"
@@ -69,27 +71,19 @@ python -m uvicorn waste_system.api.main:app `
   --env-file .env
 ```
 
-開啟：
-
 - 掃描頁：<http://127.0.0.1:8000/scanner>
 - 健康檢查：<http://127.0.0.1:8000/health>
 - API 文件：<http://127.0.0.1:8000/docs>
 
-`/health` 應顯示 `classifier_available`、`detector_available` 與 `multi_object_ready` 全部為 `true`。
+`/health` 的 `classifier_available`、`detector_available` 與 `multi_object_ready` 應全部為 `true`。
 
 ## 手機即時鏡頭
 
-手機與電腦必須連接同一個 Wi-Fi。手機瀏覽器通常要求 HTTPS 才允許即時相機，因此不能使用電腦本機的 `127.0.0.1:8000`。
+手機和電腦必須連接同一個 Wi-Fi。手機瀏覽器需要可信任的 HTTPS 才能持續使用相機。
 
-### 1. 查詢電腦目前 IP
+### 第一次設定，或電腦 IP 改變時
 
-```powershell
-ipconfig
-```
-
-找到 `Wireless LAN adapter Wi-Fi` 下方的 `IPv4 Address`。以下以 `<電腦IPv4>` 表示，請換成實際數字。
-
-### 2. 第一次建立 HTTPS 憑證
+用 `ipconfig` 查出 Wi-Fi 的 IPv4，以下以 `<電腦IPv4>` 表示：
 
 ```powershell
 cd "D:\master proj\trash-identify"
@@ -97,15 +91,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_local_https.ps1 `
   -IpAddress <電腦IPv4>
 ```
 
-只將下列公開 CA 憑證傳到自己的手機並安裝／信任：
+只把公開憑證 `certs/trash-identify-ca.crt` 傳到自己的手機並安裝／信任。不可分享或上傳 `certs/trash-identify-ca.key`、`certs/server.key`。
 
-```text
-certs/trash-identify-ca.crt
-```
-
-絕對不要分享或上傳 `certs/trash-identify-ca.key` 與 `certs/server.key`。
-
-若需要由手機下載公開 CA，可暫時在專案目錄啟動 HTTP 下載頁：
+若手機需要直接下載公開 CA，可暫時執行：
 
 ```powershell
 New-Item -ItemType Directory -Force .tmp\ca-download | Out-Null
@@ -113,42 +101,42 @@ Copy-Item certs\trash-identify-ca.crt .tmp\ca-download\trash-identify-ca.crt -Fo
 python -m http.server 8081 --bind 0.0.0.0 --directory .tmp\ca-download
 ```
 
-手機開啟：
+手機開啟 `http://<電腦IPv4>:8081/trash-identify-ca.crt`，安裝完成後按 `Ctrl+C` 關閉臨時下載頁。
 
-```text
-http://<電腦IPv4>:8081/trash-identify-ca.crt
-```
-
-安裝完成後可按 `Ctrl+C` 關閉臨時下載頁。
-
-### 3. 啟動手機 HTTPS 掃描服務
+### 啟動 HTTPS 服務
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\start_local_https.ps1
 ```
 
-保持終端機開啟，手機進入：
+腳本會顯示目前可用網址。若本系統已經佔用 8443，腳本會回報服務已運行，不會重複啟動。
 
-```text
-https://<電腦IPv4>:8443/scanner
-```
+- 手機掃描：`https://<電腦IPv4>:8443/scanner`
+- 手機蒐集：`https://<電腦IPv4>:8443/collector`
+- 健康檢查：`https://<電腦IPv4>:8443/health`
 
-允許相機權限後，按「開啟即時鏡頭」。系統會持續辨識，也保留單張照片上傳模式。
+保持終端機開啟，在手機允許相機權限後按「開啟即時鏡頭」。若校園或公共 Wi-Fi 隔離裝置，可讓電腦連接手機熱點，再以新的 IPv4 重新產生伺服器憑證。
 
-如果 IP 改變，只需以新 IP 重新執行 `setup_local_https.ps1` 並重啟服務。只要原本 CA 沒有刪除，手機通常不必重新安裝 CA。
+## 手機資料蒐集器
 
-如果手機完全無法連線：
+`/collector` 支援單張拍攝及每 3 秒連拍，資料只保存在 `data/local_capture/`。系統會：
 
-- 確認手機與電腦在相同 Wi-Fi。
-- 確認服務顯示 `Uvicorn running on https://0.0.0.0:8443`。
-- Windows 防火牆詢問時，允許 Python 在私人網路通訊。
-- 校園或公共 Wi-Fi 可能隔離裝置；可改用手機熱點，讓電腦連上熱點後重新取得 IP 與憑證。
+- 移除 EXIF，將長邊限制為 1600 px
+- 檢查模糊、曝光、完全重複及視覺過度相似照片
+- 保存 session、類型、品質及標註狀態 metadata
+- 將本地照片排除於 Git 追蹤之外
+
+蒐集類型包括 `positive`（有垃圾）、`negative`（無垃圾）及 `hard`（困難案例）。`positive` 與 `hard` 必須具備人工確認的 bounding box 才能作為 YOLO 正樣本；`negative` 使用空標籤。
 
 ## API
 
-### 多物件辨識
+主要端點：
 
-主要端點：`POST /v1/predict-multiple`
+- `POST /v1/predict-multiple`：YOLO 多物件定位、CNN 材質分類及回收說明
+- `POST /v1/predict`：分類已裁切的單件物品，不執行 YOLO
+- `POST /v1/decide`：用五類機率及可選感測資料測試決策引擎
+
+範例：
 
 ```powershell
 Invoke-RestMethod -Method Post `
@@ -156,87 +144,81 @@ Invoke-RestMethod -Method Post `
   -Form @{ file = Get-Item ".\sample.jpg"; region = "Taiwan" }
 ```
 
-回應包含每件垃圾的 bounding box、YOLO 偵測信心、CNN 材質結果及回收說明。
-
-### 單物件分類與決策測試
-
-- `POST /v1/predict`：分類已裁切好的單件垃圾圖片，不執行 YOLO。
-- `POST /v1/decide`：使用五類機率與可選感測器資料測試決策引擎。
-
 ## 資料集
 
-### RealWaste：CNN 材質分類
+| 資料來源 | 本專案用途 | 已匯入內容 |
+|---|---|---:|
+| RealWaste | CNN 五分類 | 4,752 張 |
+| TACO | 實景垃圾定位 | 1,500 張、4,784 框 |
+| CoxPWD | 戶外塑膠與小物件補強 | 4,195 張 |
+| Bower | 手機多材質與安全背景裁切 | 1,578 張、2,546 框／裁切、129 張負樣本 |
+| Mendeley Illegal Dumping | 乾淨與困難街景負樣本 | 去重後 428 張 |
 
-RealWaste 共匯入 4,752 張圖片：
+偵測資料合計 7,830 張圖片、14,201 個框；train / validation / test 分別為 6,088 / 864 / 878 張。YOLO 的來源類別統一轉為單一 `waste`，材質由 CNN 判斷。
 
-| 專案類別 | 圖片數 |
-|---|---:|
-| glass | 420 |
-| metal | 790 |
-| paper | 961 |
-| plastic | 921 |
-| unknown | 1,660 |
+來源、轉換方式及授權記錄：
 
-```powershell
-python scripts/import_realwaste.py "C:\Users\ASUS\Downloads\realwaste.zip"
-python scripts/split_dataset.py
-```
+- [RealWaste](./data/REALWASTE_LICENSE.md)
+- [TACO](./data/TACO_LICENSE.md)
+- [CoxPWD](./data/COXPWD_LICENSE.md)
+- [Bower](./data/BOWER_LICENSE.md)
+- [Mendeley Illegal Dumping](./data/MENDELEY_ILLEGAL_DUMPING_LICENSE.md)
 
-授權與來源見 [data/REALWASTE_LICENSE.md](./data/REALWASTE_LICENSE.md)。RealWaste 採 CC BY-NC-SA 4.0，目前專案應視為學術及非商業用途。
+RealWaste 與 Mendeley 含非商業授權限制，因此目前專案定位為學術、非商業研究。
 
-### TACO：YOLO 垃圾定位
-
-TACO 已匯入 1,500 張實景圖片及 4,784 個 bounding box。60 個來源類別統一轉為單一 `waste` 類別，避免用外觀名稱猜測材質。
-
-```powershell
-python scripts/import_taco.py
-python scripts/validate_detection_dataset.py data/detection
-python scripts/preview_detection_labels.py data/detection --count 30
-```
-
-授權注意事項見 [data/TACO_LICENSE.md](./data/TACO_LICENSE.md)。
-
-### CoxPWD：塑膠與手機戶外場景補強
-
-CoxPWD 2025 v3 包含 4,195 張 640×640 圖片及 14 種塑膠垃圾 bounding box。匯入器會核對官方 SHA-256、支援中斷續傳，並將所有框轉成單一 `waste` 類別。
-
-```powershell
-python scripts/import_coxpwd.py --download
-python scripts/validate_detection_dataset.py data/detection
-python scripts/preview_detection_labels.py data/detection --count 30
-```
-
-若下載中斷，重新執行同一條 `--download` 指令即可從 `.part` 暫存檔續傳。CoxPWD 只能補強塑膠與戶外場景，不能取代玻璃、金屬、紙類、本地室內照片或負樣本。授權與引用見 [data/COXPWD_LICENSE.md](./data/COXPWD_LICENSE.md)。
-
-## 模型訓練
+## 訓練與評估
 
 ### CNN 五分類
 
 ```powershell
 python -m waste_system.training.train `
-  --annotations data/annotations/realwaste_split.csv `
+  --annotations data/annotations/combined_classification.csv `
+  --output models/checkpoints_bower `
+  --reports reports/cnn_bower `
   --epochs 20 `
   --freeze-epochs 5 `
   --batch-size 16 `
   --device auto
 
-python -m waste_system.training.evaluate --device auto
-python -m waste_system.training.export
+python -m waste_system.training.evaluate `
+  --checkpoint models/checkpoints_bower/efficientnet_b0_best.pth `
+  --annotations data/annotations/combined_classification.csv `
+  --reports reports/cnn_bower_test `
+  --device auto
+
+python -m waste_system.training.export `
+  --checkpoint models/checkpoints_bower/efficientnet_b0_best.pth `
+  --output models/waste_classifier.pt
 ```
 
-輸出模型為 `models/waste_classifier.pt`。
+### YOLO26s 偵測
 
-### YOLO 垃圾偵測
+```powershell
+python scripts/validate_detection_dataset.py data/detection
+
+python -m waste_system.training.train_detector `
+  --data configs/detection.yaml `
+  --base-model yolo26s.pt `
+  --epochs 60 `
+  --image-size 640 `
+  --batch-size 8 `
+  --device 0 `
+  --name phone_s640
+
+python scripts/evaluate_detector.py `
+  --weights runs/detection/phone_s640/weights/best.pt `
+  --split test `
+  --name phone_s640_test
+```
+
+中斷後可由完整 epoch 接續：
 
 ```powershell
 python -m waste_system.training.train_detector `
-  --data configs/detection.yaml `
-  --epochs 80 `
-  --batch-size 8 `
-  --device 0
+  --resume-from runs/detection/phone_s640/weights/last.pt
 ```
 
-訓練完成後，將最佳權重複製為 `models/waste_detector.pt`。訓練前必須驗證資料並人工抽查 bounding box；同一物品或連拍場景不可分散到不同 split。
+手機只負責拍攝與傳送影格，模型實際在區域網路內的電腦推論；YOLO26s 是目前速度與偵測能力較平衡的正式模型。
 
 ## 測試
 
@@ -245,35 +227,31 @@ python -m pytest
 python scripts/validate_detection_dataset.py data/detection
 ```
 
-CNN 評估不能只看 Accuracy，還要檢查 Macro F1、各類 Recall、混淆矩陣，以及 `unknown` 被誤判成可回收物的比例。
-
 ## 專案結構
 
 ```text
 trash-identify/
-├── configs/                 # 系統與 YOLO 設定
-├── data/                    # 標註、偵測資料與授權說明
-├── models/                  # 正式 CNN 與 YOLO 權重
-├── scripts/                 # 資料匯入、檢查與 HTTPS 工具
+├── configs/                   # 系統與 YOLO 設定
+├── data/                      # 標註、偵測資料及授權說明
+├── models/                    # 正式 CNN 與 YOLO 權重
+├── runs/detection/phone_s640/ # 正式 YOLO 訓練來源
+├── scripts/                   # 資料匯入、驗證、評估及 HTTPS 工具
 ├── src/waste_system/
-│   ├── api/                 # FastAPI 與手機掃描頁
-│   ├── inference/           # OpenCV、YOLO、CNN、決策流程
-│   ├── llm/                 # 目前為安全回收建議模板
-│   └── training/            # CNN 與 YOLO 訓練、評估及匯出
+│   ├── api/                   # FastAPI、掃描頁及蒐集頁
+│   ├── inference/             # OpenCV、YOLO、CNN 與決策流程
+│   ├── llm/                   # 本機安全回收說明模板
+│   └── training/              # CNN 與 YOLO 訓練、評估及匯出
 ├── tests/
-├── USER_TASKS.md
-├── update.md
+├── update.md                  # 版本更新紀錄
 └── README.md
 ```
 
-## 已知限制
+## 使用限制
 
-- 目前 YOLO 只判斷垃圾位置，材質由第二階段 CNN 判斷。
-- 透明玻璃與透明塑膠只靠 RGB 圖片仍容易混淆。
-- 鐵與鋁不一定能由外觀穩定區分；未來可加入磁性感測器。
-- 紙杯、鋁箔包等複合材質應保守歸為 `unknown`。
-- 公開資料集和實際手機場景有差異，仍需補拍本地圖片與負樣本。
-- 自建 CA 只適合區域網路開發；公開部署應使用正式網域、受信任 HTTPS、登入與存取限制。
-- 若未來商業化，需要重新審查資料集與 Ultralytics 授權。
+- 透明玻璃與透明塑膠只靠 RGB 圖片可能混淆。
+- 鐵與鋁無法只靠外觀穩定區分，因此共同輸出為 `metal`。
+- 紙杯、鋁箔包等複合材質會保守輸出 `unknown`。
+- 自建 CA 僅供可信任的區域網路研究環境使用。
+- 公開資料與 Ultralytics 套件各有授權條件；目前系統限學術、非商業用途。
 
-需要人工完成的拍攝、標註、訓練及驗收工作集中在 [USER_TASKS.md](./USER_TASKS.md)，每次專案變更記錄在 [update.md](./update.md)。
+每次變更記錄見 [update.md](./update.md)。

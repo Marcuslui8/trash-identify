@@ -88,4 +88,5 @@ Remove-Item -LiteralPath $serverRequest, $configPath -Force
 Write-Host "Local HTTPS certificates created." -ForegroundColor Green
 Write-Host "Install and trust this certificate on the phone: $caCertificate" -ForegroundColor Yellow
 Write-Host "After installation, open: https://${IpAddress}:8443/scanner"
+Write-Host "Data collector: https://${IpAddress}:8443/collector"
 Write-Host "Keep trash-identify-ca.key private. Never copy it to the phone." -ForegroundColor Yellow
