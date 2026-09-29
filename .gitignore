@@ -10,6 +10,9 @@ htmlcov/
 .chart-data-*/
 .codex-finalizer/
 .codex-ppt-build/
+.codex-review-*/
+.codex-finalizer-*/
+release-assets/
 node_modules/
 ~$*
 certs/
@@ -28,6 +31,8 @@ data/detection/labels/**/taco_*.txt
 data/detection/labels/**/coxpwd_*.txt
 data/detection/labels/**/bower_*.txt
 data/detection/labels/**/mendeley_neg_*.txt
+data/detection/labels/**/mju_*.txt
+data/annotations/mju_waste_import.csv
 models/*.pt
 models/*.pth
 models/*.onnx

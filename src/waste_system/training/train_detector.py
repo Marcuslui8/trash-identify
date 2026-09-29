@@ -13,6 +13,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--device", default="0")
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="DataLoader workers; 0 is the stable Windows setting",
+    )
+    parser.add_argument(
         "--learning-rate",
         type=float,
         default=None,
@@ -60,6 +66,7 @@ def main() -> None:
         imgsz=args.image_size,
         batch=args.batch_size,
         device=args.device,
+        workers=args.workers,
         project=str(args.project.resolve()),
         name=args.name,
         patience=args.patience,

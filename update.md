@@ -2,6 +2,25 @@
 
 本檔案記錄專案每次更新。新紀錄請加在最上方，日期使用 `YYYY-MM-DD`。
 
+## 2026-09-29 — v0.9.0 評審一鍵啟動版
+
+### 新增
+
+- 新增 `scripts/setup_demo.ps1`：自動建立 `.venv`、安裝偵測依賴、下載 GitHub Release 模型、驗證 SHA-256 並放入 `models/`。
+- 新增 `scripts/start_demo.ps1`：檢查模型與環境後啟動本機 FastAPI 服務，輸出掃描頁、健康檢查與 API 文件網址。
+- 新增 `scripts/package_demo_models.ps1`：將經過獨立 test split 評估的 YOLO 模型與正式 CNN 模型打包成 Release asset，並產生 SHA-256 檔案。
+- README 新增評審快速啟動流程；評審不需要取得訓練照片或自行訓練即可使用系統。
+
+### 模型
+
+- 評審示範模型採用 `runs/detection/phone_s640_mju_w0/weights/best.pt`，其獨立 test split 為 Precision 0.810、Recall 0.610、mAP50 0.691、mAP50-95 0.466。
+- Release 只包含模型權重，不包含資料集照片；資料集與私人手機照片維持 Git 忽略。
+
+### 驗證
+
+- `setup_demo.ps1` 與 `start_demo.ps1` 已加入 Windows 評審操作流程。
+- 專案版本同步為 `0.9.0`。
+
 ## 2026-09-28 — v0.8.0 系統與文件整理
 
 ### 更新
@@ -15,6 +34,21 @@
 
 - 正式部署的 `models/waste_detector.pt`、`models/waste_classifier.pt`、YOLO26s 基礎權重及正式 `phone_s640` 訓練紀錄均保留。
 - 資料集、授權文件、匯入清單、測試、報告及手機蒐集功能均保留。
+
+## 2026-09-28 — MJU-Waste 公開資料匯入器
+
+### 新增
+
+- 新增 `scripts/import_mju_waste.py`，支援官方 Pascal VOC XML 與官方 train／val／test JSON 切分。
+- YOLO 訓練入口新增 `--workers`，Windows 預設為 `0`，避免多進程 DataLoader 在第一個 batch 卡住。
+- MJU-Waste 影像轉為目前單一 `waste` YOLO 類別，檔名加上 `mju_` 前綴，避免與既有來源碰撞。
+- 新增 `data/MJU_WASTE_LICENSE.md` 與匯入器測試。
+- README 補充 MJU-Waste 的下載、授權與匯入方式。
+
+### 資料策略
+
+- MJU-Waste 圖片不提交到 Git；使用者從官方來源下載後再執行匯入器。
+- MJU-Waste 作為公開資料補強；本地手機照片仍應保留為獨立 test／驗收集，不與公開資料混成同一個驗收指標。
 
 ## 2026-09-28 — v0.7.1 公開乾淨街景負樣本
 

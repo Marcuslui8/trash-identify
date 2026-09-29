@@ -1,6 +1,31 @@
 # 智慧垃圾辨識系統
 
-版本：`0.8.0`
+版本：`0.9.0`
+
+## 評審快速啟動（推薦）
+
+評審不需要下載訓練照片、GPU 或自行訓練模型。模型權重會從 GitHub Release 下載，照片與模型不放在 Git 儲存庫中。
+
+需求：Windows 10/11、Python 3.11 以上，以及第一次啟動時可連接網路。
+
+```powershell
+git clone https://github.com/Marcuslui8/trash-identify.git
+cd trash-identify
+powershell -ExecutionPolicy Bypass -File scripts\setup_demo.ps1
+powershell -ExecutionPolicy Bypass -File scripts\start_demo.ps1
+```
+
+啟動後在同一台電腦開啟：
+
+- 掃描頁：<http://127.0.0.1:8000/scanner>
+- 健康檢查：<http://127.0.0.1:8000/health>
+- API 文件：<http://127.0.0.1:8000/docs>
+
+`setup_demo.ps1` 會自動建立 `.venv`、安裝偵測依賴、建立 `.env`、下載 Release 模型及 `.sha256` 校驗檔，再放入 `models/`。`start_demo.ps1` 會檢查兩個模型存在後啟動 FastAPI。CPU 可以執行，但即時鏡頭速度會比有 NVIDIA GPU 慢。
+
+若要讓同一 Wi-Fi 的手機使用，先執行 `scripts\setup_local_https.ps1 -IpAddress <電腦IPv4>`，再執行 `scripts\start_local_https.ps1`；完整的 CA 安裝與手機操作方式見下方「手機即時鏡頭」。
+
+本流程預設使用 GitHub Release `v0.9.0` 的兩個資產：`waste-models-v0.9.0.zip` 與 `waste-models-v0.9.0.sha256`。它們只含模型權重，不含訓練照片；若重新發布模型，請同步更新 `ReleaseTag` 與資產檔名。
 
 本系統可由電腦或同一區域網路內的手機瀏覽器使用，支援單張照片及即時鏡頭的多物件垃圾辨識。
 
@@ -38,15 +63,15 @@ YOLO 負責找出每件垃圾的位置，CNN 再判斷材質。回收說明由�
 - 已整合 RealWaste、TACO、CoxPWD、Bower 與 Mendeley 資料
 - 具備模糊、過暗、低信心、重複照片及無法分類保護
 
-正式 YOLO26s 在獨立 test split 的結果：
+目前部署的 YOLO26s（MJU-Waste 補強版）在獨立 test split 的結果：
 
 | 指標 | 結果 |
 |---|---:|
-| Precision | 0.781 |
-| Recall | 0.586 |
-| mAP50 | 0.662 |
-| mAP50-95 | 0.445 |
-| RTX 3050 平均推論 | 約 9.48 ms／張 |
+| Precision | 0.810 |
+| Recall | 0.610 |
+| mAP50 | 0.691 |
+| mAP50-95 | 0.466 |
+| RTX 3050 平均推論 | 約 8.99 ms／張 |
 
 ## 安裝
 
@@ -153,8 +178,9 @@ Invoke-RestMethod -Method Post `
 | CoxPWD | 戶外塑膠與小物件補強 | 4,195 張 |
 | Bower | 手機多材質與安全背景裁切 | 1,578 張、2,546 框／裁切、129 張負樣本 |
 | Mendeley Illegal Dumping | 乾淨與困難街景負樣本 | 去重後 428 張 |
+| MJU-Waste | RGB 實景多物件定位補強 | 官方約 4,950 張 |
 
-偵測資料合計 7,830 張圖片、14,201 個框；train / validation / test 分別為 6,088 / 864 / 878 張。YOLO 的來源類別統一轉為單一 `waste`，材質由 CNN 判斷。
+偵測資料合計 8,333 張圖片、14,713 個框；train / validation / test 分別為 6,388 / 910 / 1,035 張。YOLO 的來源類別統一轉為單一 `waste`，材質由 CNN 判斷。
 
 來源、轉換方式及授權記錄：
 
@@ -163,8 +189,18 @@ Invoke-RestMethod -Method Post `
 - [CoxPWD](./data/COXPWD_LICENSE.md)
 - [Bower](./data/BOWER_LICENSE.md)
 - [Mendeley Illegal Dumping](./data/MENDELEY_ILLEGAL_DUMPING_LICENSE.md)
+- [MJU-Waste](./data/MJU_WASTE_LICENSE.md)
 
 RealWaste 與 Mendeley 含非商業授權限制，因此目前專案定位為學術、非商業研究。
+
+MJU-Waste 的圖片不放在本 repository。取得官方壓縮檔並解壓後，可依下列指令匯入：
+
+```powershell
+python scripts/import_mju_waste.py "D:\datasets\MJU-Waste"
+python scripts/validate_detection_dataset.py data/detection
+```
+
+匯入器優先使用官方 `train.json`、`val.json`、`test.json` 切分；若解壓檔沒有切分檔，才使用穩定的 SHA-256 70／15／15 切分。匯入的影像會加上 `mju_` 前綴，避免與 TACO、Bower、CoxPWD 檔名衝突。
 
 ## 訓練與評估
 
@@ -202,20 +238,21 @@ python -m waste_system.training.train_detector `
   --epochs 60 `
   --image-size 640 `
   --batch-size 8 `
+  --workers 0 `
   --device 0 `
-  --name phone_s640
+  --name phone_s640_mju_w0
 
 python scripts/evaluate_detector.py `
-  --weights runs/detection/phone_s640/weights/best.pt `
+  --weights runs/detection/phone_s640_mju_w0/weights/best.pt `
   --split test `
-  --name phone_s640_test
+  --name phone_s640_mju_test
 ```
 
 中斷後可由完整 epoch 接續：
 
 ```powershell
 python -m waste_system.training.train_detector `
-  --resume-from runs/detection/phone_s640/weights/last.pt
+  --resume-from runs/detection/phone_s640_mju_w0/weights/last.pt
 ```
 
 手機只負責拍攝與傳送影格，模型實際在區域網路內的電腦推論；YOLO26s 是目前速度與偵測能力較平衡的正式模型。
@@ -234,7 +271,7 @@ trash-identify/
 ├── configs/                   # 系統與 YOLO 設定
 ├── data/                      # 標註、偵測資料及授權說明
 ├── models/                    # 正式 CNN 與 YOLO 權重
-├── runs/detection/phone_s640/ # 正式 YOLO 訓練來源
+├── runs/detection/phone_s640_mju_w0/ # 部署 YOLO 訓練來源
 ├── scripts/                   # 資料匯入、驗證、評估及 HTTPS 工具
 ├── src/waste_system/
 │   ├── api/                   # FastAPI、掃描頁及蒐集頁
